@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Secure Data Extraction Tool</title>
+<style>
+/* ================= CSS STYLING ================= */
+body {
+    font-family: Arial, sans-serif;
+    background: #f0f4f8;
+    display: flex;
+    justify-content: center;
+    padding-top: 50px; /* centers the container vertically with some spacing */
+}
+
+.container {
+    background: #fff;
+    padding: 30px;
+    border-radius: 12px;
+    width: 450px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.2); /* subtle shadow for 3D effect */
+}
+
+h1 {
+    text-align: center;
+    color: #0a74da;
+    margin-bottom: 20px;
+}
+
+textarea, input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+}
+
+button {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    background-color: #0a74da;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+button:hover {
+    background-color: #065cb4; /* hover effect for better UX */
+}
+
+.message {
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.valid {
+    color: green;
+}
+
+.invalid {
+    color: red;
+}
+
+pre {
+    background: #f4f4f4;
+    padding: 15px;
+    border-radius: 6px;
+    overflow-x: auto; /* allows horizontal scroll for long JSON output */
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Secure Data Extraction Tool</h1>
+
+    <!-- User input: Paragraph introduction -->
+    <label>Introduce yourself (paragraph):</label>
+    <textarea id="intro" rows="4" placeholder="Hello, my name is Beni David from Rwanda. I bought software for USD 450."></textarea>
+    <div id="introMsg" class="message"></div>
+
+    <!-- User input: Email -->
+    <label>Email:</label>
+    <input type="text" id="email" placeholder="benidavid@gmail.com">
+    <div id="emailMsg" class="message"></div>
+
+    <!-- User input: Password -->
+    <label>Password:</label>
+    <input type="password" id="password" placeholder="Strong password">
+    <div id="passwordMsg" class="message"></div>
+
+    <!-- User input: Credit Card -->
+    <label>Credit Card (16 digits):</label>
+    <input type="text" id="card" placeholder="1234123412341234">
+    <div id="cardMsg" class="message"></div>
+
+    <!-- Buttons: Extract data and save JSON -->
+    <button id="extractBtn">Extract Data</button>
+    <button id="saveBtn" style="display:none;">Save JSON</button>
+
+    <!-- Area to display structured output -->
+    <h3>Structured Output:</h3>
+    <pre id="output"></pre>
+</div>
+
+<script>
+// ================= REGEX DEFINITIONS =================
+// Regex to extract the full name from paragraph (single pattern)
+const nameRegex = /my name is ([A-Za-z]+\s[A-Za-z]+)/i;
+
+// Regex to extract country from paragraph
+const countryRegex = /from ([A-Za-z]+)/i;
+
+// Regex to extract currency amount (supports USD, EUR, RWF, $, £, €)
+const currencyRegex = /(\$|USD|EUR|RWF|£|€)\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/;
+
+// Regex for email validation
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Regex for strong password: at least 8 chars, one uppercase, one number
+const passwordRegex = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
+
+// Regex for credit card: exactly 16 digits
+const cardRegex = /^\d{16}$/;
+
+// ================= HELPER FUNCTIONS =================
+
+// Masks email for privacy: keeps first 2 characters, masks the rest
+function maskEmail(email) {
+    const [user, domain] = email.split("@");
+    return user.slice(0,2) + "***@" + domain;
+}
+
+// Masks credit card for privacy: shows first 4 and last 4 digits
+function maskCard(num) {
+    return num.slice(0,4) + " **** **** " + num.slice(-4);
+}
+
+// Hashes password using Web Crypto API (SHA-256)
+async function hashPassword(password) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    // Convert buffer to hex string and truncate for display
+    return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2,"0"))
+        .join("")
+        .slice(0,20) + "...";
+}
+
+// Generic field validator
+// value: user input
+// regex: regex to validate
+// msgEl: HTML element to display message
+// fieldName: field name for display
+function validateField(value, regex, msgEl, fieldName) {
+    if (regex.test(value)) {
+        msgEl.textContent = `Valid ${fieldName}`;
+        msgEl.className = "message valid";
+        return true;
+    } else {
+        msgEl.textContent = `Invalid ${fieldName}`;
+        msgEl.className = "message invalid";
+        return false;
+    }
+}
+
+// ================= MAIN FUNCTION =================
+let lastResult = null; // store the latest successful extraction
+
+document.getElementById("extractBtn").addEventListener("click", async () => {
+    // Trim inputs to remove extra spaces
+    const intro = document.getElementById("intro").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const card = document.getElementById("card").value.trim();
+
+    // Message elements
+    const introMsg = document.getElementById("introMsg");
+    const emailMsg = document.getElementById("emailMsg");
+    const passwordMsg = document.getElementById("passwordMsg");
+    const cardMsg = document.getElementById("cardMsg");
+    const outputEl = document.getElementById("output");
+    const saveBtn = document.getElementById("saveBtn");
+
+    // ================= VALIDATE INDIVIDUAL FIELDS =================
+    const emailValid = validateField(email, emailRegex, emailMsg, "Email");
+    const passwordValid = validateField(password, passwordRegex, passwordMsg, "Password");
+    const cardValid = validateField(card, cardRegex, cardMsg, "Credit Card");
+
+    // ================= EXTRACT FROM PARAGRAPH =================
+    // Use single regex per field
+    const nameMatch = intro.match(nameRegex);         // captures full name
+    const countryMatch = intro.match(countryRegex);   // captures country
+    const amountMatch = intro.match(currencyRegex)?.[0]?.replace(/\.$/,""); // capture currency, remove trailing period
+
+    // Check if any paragraph field failed to extract
+    let missingFields = [];
+    if (!nameMatch) missingFields.push("Name");
+    if (!countryMatch) missingFields.push("Country");
+    if (!amountMatch) missingFields.push("Currency/Amount");
+
+    if (missingFields.length > 0) {
+        // Show message specifying which fields failed
+        introMsg.textContent = "Could not extract: " + missingFields.join(", ");
+        introMsg.className = "message invalid";
+        saveBtn.style.display = "none";
+        return; // stop execution
+    } else {
+        introMsg.textContent = "Paragraph data extracted successfully";
+        introMsg.className = "message valid";
+    }
+
+    // ================= BUILD STRUCTURED OUTPUT =================
+    lastResult = {
+        name: nameMatch[1],               // first captured group from regex
+        country: countryMatch[1],         // first captured group from regex
+        amount: amountMatch,              // string with currency
+        email: maskEmail(email),          // masked email
+        passwordHash: await hashPassword(password), // hashed password
+        creditCard: maskCard(card)        // masked credit card
+    };
+
+    // Display structured JSON output
+    outputEl.textContent = JSON.stringify(lastResult, null, 2);
+    saveBtn.style.display = "block"; // show save button
+});
+
+// ================= SAVE JSON =================
+// Allows user to download extracted data as JSON
+document.getElementById("saveBtn").addEventListener("click", () => {
+    if (!lastResult) return; // no data to save
+
+    const blob = new Blob([JSON.stringify(lastResult, null, 2)], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "extracted_data.json"; // default filename
+    a.click();
+
+    URL.revokeObjectURL(url); // cleanup
+});
+</script>
+</body>
+</html>
